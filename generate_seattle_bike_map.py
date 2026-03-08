@@ -173,21 +173,29 @@ def build_layer_groups(existing_data: dict, planned_data: dict, trails_data: dic
     """
     groups: dict = {}
 
+    # Categories that should be merged into a single FeatureGroup
+    CATEGORY_REMAP = {
+        "BKF-PBL": "BKF-OFFST",   # both share the same label/colour; merge so
+                                   # the layer control has one real checkbox
+    }
+
     def add_features(geojson_data: dict, planned: bool):
         for feature in geojson_data["features"]:
             props = feature.get("properties", {})
             cat   = props.get("CATEGORY") or "_default"
-            key   = (cat, planned)
+            # Remap to canonical group key before looking up style / creating group
+            group_cat = CATEGORY_REMAP.get(cat, cat)
+            key   = (group_cat, planned)
 
             if key not in groups:
-                style_info = FACILITY_STYLES.get(cat, FACILITY_STYLES["_default"])
+                style_info = FACILITY_STYLES.get(group_cat, FACILITY_STYLES["_default"])
                 suffix = " (Planned)" if planned else ""
                 groups[key] = folium.FeatureGroup(
                     name=style_info["label"] + suffix,
                     show=True,
                 )
 
-            style = facility_style(cat, planned)
+            style = facility_style(group_cat, planned)
             popup_html = feature_popup(props, planned)
 
             folium.GeoJson(
@@ -291,8 +299,12 @@ LEGEND_HTML = """
 
   <hr style="margin:6px 0; border-color:#ddd">
   <small style="color:#888">
-    Data: Seattle Open Data<br>
-    Generated: {date}
+    Data: <a href="https://data-seattlecitygis.opendata.arcgis.com"
+      target="_blank" style="color:#555">Seattle Open Data</a><br>
+    Data updated: {data_date}<br>
+    <a href="https://github.com/ClaytonSasaki/SeattleBikeMap"
+      target="_blank" style="color:#555">GitHub</a><br>
+    &copy; 2026 Clayton Sasaki
   </small>
 </div>
 """
@@ -302,9 +314,25 @@ LEGEND_HTML = """
 # Main
 # ---------------------------------------------------------------------------
 
-def main():
-    from datetime import date
+def parse_data_date(geojson_data: dict) -> str:
+    """
+    Extract the dataset last-updated date from the DATE_MVW_LAST_UPDATED property,
+    which Seattle Open Data sets consistently across all features when the
+    materialized view is refreshed. Falls back to an empty string if not found.
+    """
+    from email.utils import parsedate_to_datetime
+    for feat in geojson_data["features"]:
+        raw = feat.get("properties", {}).get("DATE_MVW_LAST_UPDATED")
+        if raw:
+            try:
+                dt = parsedate_to_datetime(raw)
+                return dt.strftime("%B %d, %Y")
+            except Exception:
+                return raw[:16]   # return raw string if parsing fails
+    return ""
 
+
+def main():
     print(f"Loading {EXISTING_FILE} …")
     existing = load_geojson(EXISTING_FILE)
     print(f"  → {len(existing['features'])} features")
@@ -317,18 +345,24 @@ def main():
     trails = load_geojson(TRAILS_FILE)
     print(f"  → {len(trails['features'])} features")
 
+    # Derive "as of" date from the dataset itself
+    data_date = parse_data_date(existing) or parse_data_date(planned) or ""
+    print(f"Data last updated: {data_date or '(unknown)'}")
+
     # Create base map
     m = folium.Map(
         location=MAP_CENTER,
         zoom_start=MAP_ZOOM,
-        tiles=TILE_LAYER,
+        tiles="CartoDB positron",
+        name="CartoDB Positron (default)",
         attr="© CartoDB © OpenStreetMap contributors | Bike data © City of Seattle",
         prefer_canvas=True,   # faster rendering for many lines
     )
 
-    # Add a secondary tile choice so users can switch to a satellite/street view
+    # Secondary tile option — switch via the layer control
     folium.TileLayer(
-        "OpenStreetMap", name="OpenStreetMap", attr="© OpenStreetMap contributors"
+        "OpenStreetMap", name="OpenStreetMap", attr="© OpenStreetMap contributors",
+        show=False,
     ).add_to(m)
 
     # Build and attach layer groups
@@ -342,8 +376,7 @@ def main():
         ("BKF-CLMB", False),
         ("BKF-BL",  False), ("BKF-BL",  True),
         ("BKF-BBL", False),
-        ("BKF-PBL", False), ("BKF-PBL", True),
-        ("BKF-OFFST", False),
+        ("BKF-OFFST", False), ("BKF-OFFST", True),
         ("_default", False), ("_default", True),
     ]
     added_keys = set()
@@ -359,11 +392,12 @@ def main():
     folium.LayerControl(collapsed=True).add_to(m)
 
     # Legend
-    legend = LEGEND_HTML.format(date=date.today().strftime("%B %d, %Y"))
+    legend = LEGEND_HTML.format(data_date=data_date or "unknown")
     m.get_root().html.add_child(folium.Element(legend))
 
-    # Title bar
-    title_html = """
+    # Title bar — includes data "as of" date extracted from the GeoJSON
+    as_of = f" (as of {data_date})" if data_date else ""
+    title_html = f"""
     <div style="
         position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
         z-index: 1000; background: rgba(255,255,255,0.92);
@@ -371,7 +405,7 @@ def main():
         font-family: Arial, sans-serif; font-size: 16px; font-weight: bold;
         box-shadow: 0 2px 6px rgba(0,0,0,0.2); white-space: nowrap;
     ">
-        🚲 Seattle Bike Infrastructure Map
+        &#x1F6B2; Seattle Bike Infrastructure Map{as_of}
     </div>
     """
     m.get_root().html.add_child(folium.Element(title_html))
