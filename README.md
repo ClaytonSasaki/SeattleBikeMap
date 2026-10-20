@@ -8,7 +8,7 @@ An interactive map of Seattle's bike infrastructure, styled after the official [
 - Planned facilities are shown as dashed, semi-transparent overlays
 - Multi-use trails are merged into the separated pathway layer
 - Hover tooltips are included for quick identification with clickable popups for extra detail
-- All layers are toggleable layers and two base maps (CartoDB light and OpenStreetMap) are included
+- All layers are toggleable layers and two base maps (CartoDB light and OpenStreetMap) are included (CartoDB requires a free API key; see Usage)
 
 ## Facility Types
 
@@ -29,6 +29,8 @@ Planned versions of each facility are rendered with the same colour but as dashe
 
 ```
 SeattleBikeMap/
+├── .github/workflows/deploy.yml
+├── fetch_data.py
 ├── generate_seattle_bike_map.py
 ├── requirements.txt
 ├── README.md
@@ -39,7 +41,7 @@ SeattleBikeMap/
     └── multi-use_trails.geojson
 ```
 
-## Setup
+## Setup (to run locally)
 
 **Requirements:** Python 3.8+ (limited by the `folium` dependency, not the script itself)
 
@@ -70,18 +72,38 @@ pip install -r requirements.txt
 python generate_seattle_bike_map.py
 ```
 
-This produces `seattle_bike_map.html` in the project root. Open it in any browser.
+This produces `seattle_bike_map.html` in the project root. To view it, serve it locally rather than opening the file directly — OpenStreetMap's tile servers block pages opened from disk (`file://`), because they send no `Referer` header:
+
+```bash
+python -m http.server 8765
+# then open http://localhost:8765/seattle_bike_map.html
+```
+
+CARTO basemaps require an API key ([get a free one here](https://carto.com/basemaps/apikey)). Set it before generating the map to use the CartoDB light base map as the default:
+
+```bash
+CARTO_API_KEY=your_key python generate_seattle_bike_map.py
+```
+
+Without a key, OpenStreetMap is used as the default (and only) base map. Note that the key is embedded in the generated HTML, so restrict it to your site's domain in the CARTO dashboard if you host the map publicly. A domain-restricted key won't load tiles in a local preview unless you also allow `localhost`.
 
 ## Updating the Map
 
-The map is designed to be easy to keep current as Seattle's bike network changes.
+The hosted map updates itself: a [GitHub Actions workflow](.github/workflows/deploy.yml) downloads the latest data, regenerates the map and deploys it to GitHub Pages on the 1st of every month, on every push to `main`, and on demand (Actions tab → *Build and deploy map* → *Run workflow*). It reads the CARTO key from the `CARTO_API_KEY` repository secret.
 
-1. Download updated GeoJSON files from [Seattle Open Data](https://data-seattlecitygis.opendata.arcgis.com):
+To update the map locally:
+
+1. Download the latest data into `data/`:
+
+```bash
+python fetch_data.py
+```
+
+   Or download the GeoJSON files manually from [Seattle Open Data](https://data-seattlecitygis.opendata.arcgis.com):
    - [Existing bike facilities](https://data-seattlecitygis.opendata.arcgis.com/datasets/SeattleCityGIS::sdot-bike-facilities/explore?layer=2)
-   - [Planned bike facilities](https://data-seattlecitygis.opendata.arcgis.com/datasets/SeattleCityGIS::sdot-bike-facilities/explore?layer=2)
+   - [Planned bike facilities](https://data-seattlecitygis.opendata.arcgis.com/datasets/SeattleCityGIS::sdot-bike-facilities/explore?layer=3)
    - [Multi-use trails](https://data-seattlecitygis.opendata.arcgis.com/datasets/SeattleCityGIS::sdot-bike-facilities/explore?layer=1)
-2. Replace the files in the `data/` directory
-3. Re-run `python generate_seattle_bike_map.py`
+2. Re-run `python generate_seattle_bike_map.py`
 
 No code changes are needed unless SDOT changes the underlying data schema.
 

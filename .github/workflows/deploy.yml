@@ -1,0 +1,82 @@
+# Fetches the latest SDOT bike facility data, regenerates the map and
+# deploys it to GitHub Pages — monthly, on every push to main, or on demand.
+#
+# Setup (once):
+#   - Settings → Secrets and variables → Actions → add CARTO_API_KEY
+#   - Settings → Pages → Source: "GitHub Actions"
+
+name: Build and deploy map
+
+on:
+  schedule:
+    - cron: "0 12 1 * *"   # 12:00 UTC on the 1st of every month
+  push:
+    branches: [main]
+  workflow_dispatch:       # "Run workflow" button on the Actions tab
+
+permissions:
+  contents: write    # to commit refreshed data back to the repo
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch latest data
+        run: python fetch_data.py
+
+      - name: Generate map
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
+        run: |
+          if [ -z "$CARTO_API_KEY" ]; then
+            echo "::error::CARTO_API_KEY secret is not set"
+            exit 1
+          fi
+          python generate_seattle_bike_map.py
+          mkdir site
+          mv seattle_bike_map.html site/index.html
+
+      # Runs after the map builds, so data that fails to generate is never committed.
+      # Pushes made with GITHUB_TOKEN don't trigger another workflow run.
+      - name: Commit refreshed data
+        run: |
+          git add data/
+          if git diff --cached --quiet; then
+            echo "Data unchanged — nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update bike facility data ($(date -u +%Y-%m-%d))"
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

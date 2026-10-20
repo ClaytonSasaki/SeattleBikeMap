@@ -9,3 +9,6 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Generated map (built and deployed by GitHub Actions)
+seattle_bike_map.html

@@ -9,7 +9,7 @@ Data sources (GeoJSON, downloaded from Seattle Open Data):
 
 Usage:
     pip install folium branca
-    python generate_seattle_bike_map.py
+    CARTO_API_KEY=your_key python generate_seattle_bike_map.py   # key optional
 
 Output:
     seattle_bike_map.html  — open in any browser, or host as a static webpage.
@@ -39,9 +39,12 @@ OUTPUT_FILE = "seattle_bike_map.html"
 MAP_CENTER = [47.606, -122.332]
 MAP_ZOOM   = 12
 
-# Tile layer — "CartoDB positron" gives a clean light-grey base similar to the
-# printed map. Other good options: "CartoDB dark_matter", "OpenStreetMap".
-TILE_LAYER = "CartoDB positron"
+# Tile layer — CARTO "light_all" (Positron) gives a clean light-grey base similar
+# to the printed map. CARTO basemaps require a (free) API key, read from the
+# CARTO_API_KEY environment variable: https://carto.com/basemaps/apikey
+# Without a key, OpenStreetMap is used as the default base map instead.
+CARTO_API_KEY = os.environ.get("CARTO_API_KEY", "").strip()
+CARTO_TILES = "https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key="
 
 # ---------------------------------------------------------------------------
 # Facility style definitions
@@ -318,11 +321,13 @@ def parse_data_date(geojson_data: dict) -> str:
     """
     Extract the dataset last-updated date from the DATE_MVW_LAST_UPDATED property,
     which Seattle Open Data sets consistently across all features when the
-    materialized view is refreshed. Falls back to an empty string if not found.
+    materialized view is refreshed. fetch_data.py stores it once at the top level
+    of the file instead. Falls back to an empty string if not found.
     """
     from email.utils import parsedate_to_datetime
-    for feat in geojson_data["features"]:
-        raw = feat.get("properties", {}).get("DATE_MVW_LAST_UPDATED")
+    candidates = [geojson_data] + geojson_data["features"]
+    for feat in candidates:
+        raw = (feat.get("properties") or {}).get("DATE_MVW_LAST_UPDATED")
         if raw:
             try:
                 dt = parsedate_to_datetime(raw)
@@ -353,16 +358,25 @@ def main():
     m = folium.Map(
         location=MAP_CENTER,
         zoom_start=MAP_ZOOM,
-        tiles="CartoDB positron",
-        name="CartoDB Positron (default)",
-        attr="© CartoDB © OpenStreetMap contributors | Bike data © City of Seattle",
+        tiles=None,
         prefer_canvas=True,   # faster rendering for many lines
     )
 
-    # Secondary tile option — switch via the layer control
+    # Base maps — the first one added is shown by default; switch via the layer control
+    if CARTO_API_KEY:
+        folium.TileLayer(
+            CARTO_TILES + CARTO_API_KEY,
+            name="CartoDB Positron (default)",
+            attr="© OpenStreetMap contributors, © CARTO | Bike data © City of Seattle",
+            max_zoom=20,
+        ).add_to(m)
+    else:
+        print("CARTO_API_KEY not set — using OpenStreetMap as the only base map.")
     folium.TileLayer(
-        "OpenStreetMap", name="OpenStreetMap", attr="© OpenStreetMap contributors",
-        show=False,
+        "OpenStreetMap",
+        name="OpenStreetMap" if CARTO_API_KEY else "OpenStreetMap (default)",
+        attr="© OpenStreetMap contributors | Bike data © City of Seattle",
+        show=not CARTO_API_KEY,
     ).add_to(m)
 
     # Build and attach layer groups
